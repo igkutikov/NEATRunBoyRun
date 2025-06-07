@@ -29,9 +29,9 @@ def play() -> None:
 
 def train() -> None:
     #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainer('random', model.evaluators.NEATStepCounerEvaluator)
-    trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainer('random', model.evaluators.NEATStepCounerEvaluator, 20)
+    trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainer('static', model.evaluators.NEATStepCounerEvaluator, 20)
     #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainer('static_with_obstacles', model.evaluators.NEATLastPlatformPenaltyEvaluator, 20)
-    trainer.train(600)
+    trainer.train(50)
     del trainer
 
     stats: typing.List[training.statistics.TrainingStatisticsEntry] = training.statistics.load_statistics_json(training.JSON_STATISTICS_FPATH)
