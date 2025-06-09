@@ -25,7 +25,7 @@ class Map(interfaces.IMap):
         if rng[0] >= self.__map.shape[0] or rng[1] < rng[0]:
             return numpy.zeros((self.nRows, rng[1] - rng[0]), dtype=numpy.int32)
         
-        return self.__map[rng[0]:rng[1], :].transpose()
+        return self.__map[rng[0]:rng[1], :]
     
 
     def is_coord_valid(self, x: int, y: int) -> bool:

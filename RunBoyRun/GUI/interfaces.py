@@ -246,6 +246,7 @@ class ICharacter:
         self._theta: float = math.atan2(-dy * self._board.TileHeight, dx * self._board.TileWidth)
         self._theta = math.degrees(self._theta)
         self._moved: bool = 0 != dx or 0 != dy
+        self._dead: int = 0
 
 #region Properties
 
@@ -265,7 +266,7 @@ class ICharacter:
     
 
     @property
-    def Dead(self) -> int:
+    def Dead(self) -> bool:
         return self._character.Dead
     
 
@@ -305,5 +306,11 @@ class ICharacter:
     def _do_step(self, verbose: bool = False) -> typing.Tuple[int, int]: ...
         
 
-    @abc.abstractmethod
-    def render(self, screen: pygame.Surface) -> None: ...
+    def render(self, screen: pygame.Surface) -> None:
+        if self._character.Dead:
+            self._dead += 1
+            if self._dead > 2:
+                self._dead = 2
+
+        if self._dead < 2:
+            self._render(screen)

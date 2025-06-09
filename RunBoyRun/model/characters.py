@@ -1,5 +1,6 @@
 import typing
 import pickle
+import abc
 import model
 import neat.config
 import neat.genome
@@ -194,7 +195,7 @@ class NEATCharacter(interfaces.ICharacter):
         if self.__decision is not None and len(self.__decision) > 0:
             return self.__decision[0] > interfaces.DECISION_THRESHOLD
 
-        if (self.__decision is None or len(self.__decision) == 0) and interfaces.CELL_PLATFORM == self._board.get_cell(self._posX, self._posY):
+        if (self.__decision is None or len(self.__decision) == 0) and interfaces.CELL_PLATFORM == self._cell_kind:
             neat_input: typing.List[float] = self.__data_provider.generate_neat_input(self._posX, self._posY, self._direction)
             self.__decision = self.__network.activate(neat_input)
             return self.__decision is not None and len(self.__decision) > 0 and self.__decision[0] > interfaces.DECISION_THRESHOLD
@@ -275,117 +276,123 @@ class NEATCharacter(interfaces.ICharacter):
         #     self.__genome.fitness += 10.0
 
 
-class NEATTraineeCharacter(interfaces.ICharacter):
-    def __init__(self, idx: int, board: interfaces.IBoard, posY: int, direction: interfaces.PROGRESSION_DIRECTION, genome_id: int, genome: neat.genome.DefaultGenome, config: neat.config.Config, evaluator: typing.Type[interfaces.INEATEvaluator]):
+class INEATTraineeCharacter(interfaces.ICharacter):
+    def __init__(self, idx: int, board: interfaces.IBoard, posY: int, direction: interfaces.PROGRESSION_DIRECTION, evaluator: typing.Type[interfaces.INEATEvaluator], genome_id: int):
         interfaces.ICharacter.__init__(self, 'AI', idx, board, posY, direction)
-        self.__data_provider: interfaces.NEATDataProvider = interfaces.NEATDataProvider(board)
-        self.__genome_id: int = genome_id
-        self.__genome: neat.genome.DefaultGenome = genome
-        self.__evaluator: interfaces.INEATEvaluator = evaluator(self, self._board)
-        self.__network: neat.nn.FeedForwardNetwork = neat.nn.FeedForwardNetwork.create(genome, config)
-        self.__genome.fitness = 0.0
-        self.__decision: typing.Optional[typing.List[float]] = None
+        self._genome_id: int = genome_id
+        self._data_provider: interfaces.NEATDataProvider = interfaces.NEATDataProvider(board)
+        self._evaluator: interfaces.INEATEvaluator = evaluator(self, self._board)
+        self._decision: typing.Optional[typing.List[float]] = None
 
-#region properties
+#region Properties
 
     @property
     def GenomeId(self) -> int:
-        return self.__genome_id
-    
-    @property
-    def Evaluator(self) -> interfaces.INEATEvaluator:
-        return self.__evaluator
-    
-    @property
-    def EvaluatedFitness(self) -> float:
-        return self.__evaluator.Fitness
-      
+        return self._genome_id
+
 
     @property
-    def Fitness(self) -> float:
-        return self.__genome.fitness
-   
-    
+    def Evaluator(self) -> interfaces.INEATEvaluator:
+        return self._evaluator
+
+
+    @property
+    def EvaluatedFitness(self) -> float:
+        return self._evaluator.Fitness
+
+
     @property
     def Decision(self) -> float:
-        return self.__evaluator.Decision
+        return self._evaluator.Decision
 
 
     @property
     def DecisionActive(self) -> bool:
-        return self.__evaluator.DecisionActive
-    
-    
+        return self._evaluator.DecisionActive
+
+
     @property
     def DecisionKind(self) -> interfaces.E_DecisionKind:
-        return self.__evaluator.DecisionKind
+        return self._evaluator.DecisionKind
 
 
     @property
     def nClick(self) -> int:
-        return self.__evaluator.nClick
-    
+        return self._evaluator.nClick
+
 
     @property
     def nPrevClick(self) -> int:
-        return self.__evaluator.nPrevClick
-    
+        return self._evaluator.nPrevClick
+
 
     @property
     def nNoClick(self) -> int:
-        return self.__evaluator.nNoClick
-    
+        return self._evaluator.nNoClick
+
 
     @property
     def nPrevNoClick(self) -> int:
-        return self.__evaluator.nPrevNoClick
-    
+        return self._evaluator.nPrevNoClick
+
 
     @property
     def nMissClick(self) -> int:
-        return self.__evaluator.nMissClick
-    
+        return self._evaluator.nMissClick
+
 
     @property
     def nPrevMissClick(self) -> int:
-        return self.__evaluator.nPrevMissClick
-    
+        return self._evaluator.nPrevMissClick
+
 
     @property
     def nNoMissClick(self) -> int:
-        return self.__evaluator.nNoMissClick
-    
+        return self._evaluator.nNoMissClick
+
+
     @property
     def nPrevNoMissClick(self) -> int:
-        return self.__evaluator.nPrevNoMissClick
-    
-    
+        return self._evaluator.nPrevNoMissClick
+
+
     @property
-    def nSteps(self) -> int:
-        return self._nSteps
+    @abc.abstractmethod
+    def Fitness(self) -> float: ... 
 
-#endregion properties
-    
-    def react(self) -> typing.Optional[bool]:
-        if self.Dead:
-            self._decision = None
-            return None
+#endregion Properties
 
-        if self.__decision is not None and len(self.__decision) > 0:
-            return self.__decision[0] > interfaces.DECISION_THRESHOLD
 
-        if (self.__decision is None or len(self.__decision) == 0) and interfaces.CELL_PLATFORM == self._board.get_cell(self._posX, self._posY):
-            neat_input: typing.List[float] = self.__data_provider.generate_neat_input(self._posX, self._posY, self._direction)
-            self.__decision = self.__network.activate(neat_input)
-            return self.__decision is not None and len(self.__decision) > 0 and self.__decision[0] > interfaces.DECISION_THRESHOLD
+    def game_over(self, result: interfaces.E_GameOverResult) -> None:
+        return
+        # ICharacter.game_over(self, result)
+        # if result == game_common.E_GameOverResult.WIN:
+        #     self.__genome.fitness += 100.0
+        # elif result == game_common.E_GameOverResult.LOSE:
+        #     self.__genome.fitness -= 50.0
+        # elif result == game_common.E_GameOverResult.DRAW:
+        #     self.__genome.fitness += 10.0
 
-        return None
-            
+
+class ANEATFFTraineeCharacter(INEATTraineeCharacter):
+    def __init__(self, idx: int, board: interfaces.IBoard, posY: int, direction: interfaces.PROGRESSION_DIRECTION, genome_id: int, genome: neat.genome.DefaultGenome, config: neat.config.Config, evaluator: typing.Type[interfaces.INEATEvaluator]):
+        INEATTraineeCharacter.__init__(self, idx, board, posY, direction, evaluator, genome_id)
+        self._genome: neat.genome.DefaultGenome = genome
+        self._genome.fitness = 0.0
+
+#region Properties
+
+    @property
+    def Fitness(self) -> float:
+        return self._genome.fitness
+
+
+#endregion Properties
 
     def do_step(self, action: typing.Optional[bool], verbose: bool = False) -> typing.Tuple[int, int]:
         if self.Dead:
             return (0, 0)
-        
+
         self._prev_direction = self._direction
         self._prev_posY = self._posY
         self._prev_posX = self._posX
@@ -439,20 +446,240 @@ class NEATTraineeCharacter(interfaces.ICharacter):
             self._dead = True
             move = (0, 0)
 
-        self.__genome.fitness = self.__evaluator.evaluate(self.__decision, verbose)
-        self.__decision = None
+        self._genome.fitness = self._evaluator.evaluate(self._decision, verbose)
+        self._decision = None
         return move
-        
 
-    def game_over(self, result: interfaces.E_GameOverResult) -> None:
-        return
-        # ICharacter.game_over(self, result)
-        # if result == game_common.E_GameOverResult.WIN:
-        #     self.__genome.fitness += 100.0
-        # elif result == game_common.E_GameOverResult.LOSE:
-        #     self.__genome.fitness -= 50.0
-        # elif result == game_common.E_GameOverResult.DRAW:
-        #     self.__genome.fitness += 10.0
+
+class NEATFFTraineeCharacter(ANEATFFTraineeCharacter):
+    def __init__(self, idx: int, board: interfaces.IBoard, posY: int, direction: interfaces.PROGRESSION_DIRECTION, genome_id: int, genome: neat.genome.DefaultGenome, config: neat.config.Config, evaluator: typing.Type[interfaces.INEATEvaluator]):
+        ANEATFFTraineeCharacter.__init__(self, idx, board, posY, direction, genome_id, genome, config, evaluator)
+        self.__network: neat.nn.FeedForwardNetwork = neat.nn.FeedForwardNetwork.create(genome, config)
+
+
+    def react(self) -> typing.Optional[bool]:
+        if self.Dead:
+            self._decision = None
+            return None
+
+        if self._decision is not None and len(self._decision) > 0:
+            return self._decision[0] > interfaces.DECISION_THRESHOLD
+
+        if (self._decision is None or len(self._decision) == 0) and interfaces.CELL_PLATFORM == self._cell_kind:
+            neat_input: typing.List[float] = self._data_provider.generate_neat_input(self._posX, self._posY, self._direction)
+            self._decision = self.__network.activate(neat_input)
+            return self._decision is not None and len(self._decision) > 0 and self._decision[0] > interfaces.DECISION_THRESHOLD
+
+        return None
+ 
+
+class NEATRecurrentTraineeCharacter(ANEATFFTraineeCharacter):
+    def __init__(self, idx: int, board: interfaces.IBoard, posY: int, direction: interfaces.PROGRESSION_DIRECTION, genome_id: int, genome: neat.genome.DefaultGenome, config: neat.config.Config, evaluator: typing.Type[interfaces.INEATEvaluator]):
+        ANEATFFTraineeCharacter.__init__(self, idx, board, posY, direction, genome_id, genome, config, evaluator)
+        self.__network: neat.nn.RecurrentNetwork = neat.nn.RecurrentNetwork.create(genome, config)
+
+
+    def react(self) -> typing.Optional[bool]:
+        if self.Dead:
+            self._decision = None
+            return None
+
+        if self._decision is not None and len(self._decision) > 0:
+            return self._decision[0] > interfaces.DECISION_THRESHOLD
+
+        if (self._decision is None or len(self._decision) == 0) and interfaces.CELL_PLATFORM == self._cell_kind:
+            neat_input: typing.List[float] = self._data_provider.generate_neat_input(self._posX, self._posY, self._direction)
+            self._decision = self.__network.activate(neat_input)
+            return self._decision is not None and len(self._decision) > 0 and self._decision[0] > interfaces.DECISION_THRESHOLD
+
+        return None
+
+
+class NEATIZNNTraineeCharacter(INEATTraineeCharacter):
+    def __init__(self, idx: int, board: interfaces.IBoard, posY: int, direction: interfaces.PROGRESSION_DIRECTION, genome_id: int, genome: neat.iznn.IZGenome, config: neat.config.Config, evaluator: typing.Type[interfaces.INEATEvaluator]):
+        INEATTraineeCharacter.__init__(self, idx, board, posY, direction, evaluator, genome_id)
+        self.__genome: neat.iznn.IZGenome = genome
+        self.__network: neat.iznn.IZNN = neat.iznn.IZNN.create(genome, config)
+
+#region properties
+
+    @property
+    def Fitness(self) -> float:
+        return self.__genome.fitness
+
+#endregion properties
+
+
+
+    def react(self) -> typing.Optional[bool]:
+        if self.Dead:
+            self._decision = None
+            return None
+
+        if self._decision is not None and len(self._decision) > 0:
+            return self._decision[0] > interfaces.DECISION_THRESHOLD
+
+        if (self._decision is None or len(self._decision) == 0) and interfaces.CELL_PLATFORM == self._cell_kind:
+            neat_input: typing.List[float] = self._data_provider.generate_neat_input(self._posX, self._posY, self._direction)
+            self.__network.set_inputs(neat_input)
+            self._decision = self.__network.advance(self.nSteps)
+            return self._decision is not None and len(self._decision) > 0 and self._decision[0] > interfaces.DECISION_THRESHOLD
+
+        return None
+
+
+    def do_step(self, action: typing.Optional[bool], verbose: bool = False) -> typing.Tuple[int, int]:
+        if self.Dead:
+            return (0, 0)
+
+        self._prev_direction = self._direction
+        self._prev_posY = self._posY
+        self._prev_posX = self._posX
+        self._prev_cell_kind = self._cell_kind
+        
+        move: typing.Tuple[int, int]
+        cell_kind: int = self._board.get_cell(self._prev_posX, self._prev_posY)
+        if action is not None and action and interfaces.CELL_PLATFORM == cell_kind:
+            if self._initial_direction == 'SE':
+                self._direction = 'NE'
+                self._initial_direction = self._direction
+                self._posY -= 1
+                move = (1, -1)
+            else: # self._initial_direction == 'NE':
+                self._direction = 'SE'
+                self._initial_direction = self._direction
+                self._posY += 1
+                move = (1, 1)
+            self._cell_kind = self._board.get_cell(1, self._posY)
+            if self._cell_kind in (interfaces.CELL_FENCE, interfaces.CELL_SAW):
+                self._dead = True
+            else:
+                self._nSteps += 1
+        elif interfaces.CELL_PLATFORM == cell_kind and interfaces.CELL_PLATFORM == self._board.get_cell(self._prev_posX + 1, self._prev_posY):
+            # do not update initial direction => self._initial_direction
+            # it is a restore point once of the series of consecutive platforms
+            self._direction = 'E'
+            move = (1, 0)
+            self._cell_kind = self._board.get_cell(1, self._posY)
+            if self._cell_kind in (interfaces.CELL_FENCE, interfaces.CELL_SAW):
+                self._dead = True
+            else:
+                self._nSteps += 1
+        elif cell_kind in (interfaces.CELL_MID_AIR, interfaces.CELL_PLATFORM):
+            if self._initial_direction == 'SE':
+                self._direction = 'SE'
+                self._initial_direction = self._direction
+                self._posY += 1
+                move = (1, 1)
+            else: # self._initial_direction == 'NE':
+                self._direction = 'NE'
+                self._initial_direction = self._direction
+                self._posY -= 1
+                move = (1, -1)
+            self._cell_kind = self._board.get_cell(1, self._posY)
+            if self._cell_kind in (interfaces.CELL_FENCE, interfaces.CELL_SAW):
+                self._dead = True
+            else:
+                self._nSteps += 1
+        else:
+            self._dead = True
+            move = (0, 0)
+
+        self.__genome.fitness = self._evaluator.evaluate(self._decision, verbose)
+        self._decision = None
+        return move
+
+
+class NEATCRTNNTraineeCharacter(INEATTraineeCharacter):
+    def __init__(self, idx: int, board: interfaces.IBoard, posY: int, direction: interfaces.PROGRESSION_DIRECTION, genome_id: int, genome: neat.genome.DefaultGenome, config: neat.config.Config, evaluator: typing.Type[interfaces.INEATEvaluator]):
+        INEATTraineeCharacter.__init__(self, idx, board, posY, direction, evaluator, genome_id)
+        self.__genome: neat.genome.DefaultGenome = genome
+        self.__network: neat.ctrnn.CTRNN = neat.ctrnn.CTRNN.create(genome, config)
+
+#region properties
+
+    @property
+    def Fitness(self) -> float:
+        return self.__genome.fitness
+
+#endregion properties
+
+    def react(self) -> typing.Optional[bool]:
+        if self.Dead:
+            self._decision = None
+            return None
+
+        if self._decision is not None and len(self._decision) > 0:
+            return self._decision[0] > interfaces.DECISION_THRESHOLD
+
+        if (self._decision is None or len(self._decision) == 0) and interfaces.CELL_PLATFORM == self._cell_kind:
+            neat_input: typing.List[float] = self._data_provider.generate_neat_input(self._posX, self._posY, self._direction)
+            self._decision = self.__network.activate(neat_input)
+            return self._decision is not None and len(self._decision) > 0 and self._decision[0] > interfaces.DECISION_THRESHOLD
+
+        return None
+
+
+    def do_step(self, action: typing.Optional[bool], verbose: bool = False) -> typing.Tuple[int, int]:
+        if self.Dead:
+            return (0, 0)
+        
+        self._prev_direction = self._direction
+        self._prev_posY = self._posY
+        self._prev_posX = self._posX
+        self._prev_cell_kind = self._cell_kind
+
+        move: typing.Tuple[int, int]
+        cell_kind: int = self._board.get_cell(self._prev_posX, self._prev_posY)
+        if action is not None and action and interfaces.CELL_PLATFORM == cell_kind:
+            if self._initial_direction == 'SE':
+                self._direction = 'NE'
+                self._initial_direction = self._direction
+                self._posY -= 1
+                move = (1, -1)
+            else: # self._initial_direction == 'NE':
+                self._direction = 'SE'
+                self._initial_direction = self._direction
+                self._posY += 1
+                move = (1, 1)
+            self._cell_kind = self._board.get_cell(1, self._posY)
+            if self._cell_kind in (interfaces.CELL_FENCE, interfaces.CELL_SAW):
+                self._dead = True
+            else:
+                self._nSteps += 1
+        elif interfaces.CELL_PLATFORM == cell_kind and interfaces.CELL_PLATFORM == self._board.get_cell(self._prev_posX + 1, self._prev_posY):
+            # do not update initial direction => self._initial_direction
+            # it is a restore point once of the series of consecutive platforms
+            self._direction = 'E'
+            move = (1, 0)
+            self._cell_kind = self._board.get_cell(1, self._posY)
+            if self._cell_kind in (interfaces.CELL_FENCE, interfaces.CELL_SAW):
+                self._dead = True
+            else:
+                self._nSteps += 1
+        elif cell_kind in (interfaces.CELL_MID_AIR, interfaces.CELL_PLATFORM):
+            if self._initial_direction == 'SE':
+                self._direction = 'SE'
+                self._initial_direction = self._direction
+                self._posY += 1
+                move = (1, 1)
+            else: # self._initial_direction == 'NE':
+                self._direction = 'NE'
+                self._initial_direction = self._direction
+                self._posY -= 1
+                move = (1, -1)
+            self._cell_kind = self._board.get_cell(1, self._posY)
+            if self._cell_kind in (interfaces.CELL_FENCE, interfaces.CELL_SAW):
+                self._dead = True
+            else:
+                self._nSteps += 1
+        else:
+            self._dead = True
+            move = (0, 0)
+
+        self.__genome.fitness = self._evaluator.evaluate(self._decision, verbose)
+        self._decision = None
+        return move
 
 
 # def __topological_search(self, row_idx: int, col_idx: int, direction: game_common.PROGRESSION_DIRECTION) -> int:

@@ -3,13 +3,17 @@ import abc
 import time
 import pygame
 import pickle
+import neat.iznn
 import neat.config
 import neat.population
 import neat.genome
 import model
 import GUI
 import training
+import matplotlib.pyplot
+from . import checkpointer
 from . import statistics
+from . import visualize
 
 
 class TrainingGenerationStats:
@@ -48,7 +52,7 @@ class TrainingGenerationStats:
         return self.__generation
 
 
-    def collect_data(self, characters: typing.Collection[model.characters.NEATTraineeCharacter]) -> None:
+    def collect_data(self, characters: typing.Collection[model.characters.NEATFFTraineeCharacter]) -> None:
         for character in characters:
             if not character.Dead:
                 self.TotalTurns += 1
@@ -115,26 +119,21 @@ class IRunBoyRunTrainer:
         self._generations: int = 0
         self._generation: int = 0
         self._board: model.boards.Board = model.boards.Board(model.maps.MapFactory.create_map(map_type))
-        self.__config: neat.config.Config = IRunBoyRunTrainer.__load_config(training.INI_NEAT_CONFIG_FPATH)
+        self.__config: neat.config.Config = self._load_config(training.INI_NEAT_CONFIG_FPATH)
         self.__population: neat.population.Population = neat.population.Population(self.__config)
         self.__evaluator: typing.Type[model.interfaces.INEATEvaluator] = evaluator
-        self._tracer: typing.Optional[statistics.TrainingTrunStatsTracer] = statistics.TrainingTrunStatsTracer(training.JSON_STEP_TRACE_FPATH)
+        self._tracer: typing.Optional[statistics.TrainingTrunStatsTracer] = None #statistics.TrainingTrunStatsTracer(training.JSON_STEP_TRACE_FPATH)
         # Add reporters to track progress
         self.__population.add_reporter(neat.StdOutReporter(True))
         self.__population.add_reporter(statistics.StatisticsReporter())
+        self.__population.add_reporter(checkpointer.CheckPointerReporter(training.PCKL_POPULATION_FPATH, generation_interval=100))
         # self.__population.add_reporter(checkpointer.CheckPointerReporter(population_path))
 
 
-    @staticmethod
-    def __load_config(config_path: str) -> neat.config.Config:
-        return neat.config.Config(
-            neat.DefaultGenome,
-            neat.DefaultReproduction,
-            neat.DefaultSpeciesSet,
-            neat.DefaultStagnation,
-            config_path,
-    )
+    @abc.abstractmethod
+    def _load_config(self, config_path: str) -> neat.config.Config: ...
 
+#region Properties
 
     @property
     def _Population(self) -> neat.population.Population:
@@ -145,12 +144,20 @@ class IRunBoyRunTrainer:
     def _Evaluator(self) -> typing.Type[model.interfaces.INEATEvaluator]:
         return self.__evaluator
 
+#endregion Properties
 
     def train(self, generations: int) -> None:
         self._generations = generations
         self._generation: int = -1
+
+        if self._tracer is not None:
+            self._tracer.start_training(self._generations, self.__config, self.__population)
+
         winner: neat.genome.DefaultGenome = self._Population.run(self.__evaluate_genomes, self._generations)
        
+        if self._tracer is not None:
+            self._tracer.end_training(self._generation, self.__config, self.__population)
+
         stats_reporter: statistics.StatisticsReporter = None 
         for reporter in self._Population.reporters.reporters:
             if isinstance(reporter, statistics.StatisticsReporter):
@@ -164,6 +171,14 @@ class IRunBoyRunTrainer:
         self.save_graduate(graduate)
         print(f'winner genome {winner.key} => fittens: {winner.fitness}')
 
+        node_names: typing.Dict[int, str] = {-1: 'A', -2: 'B', 0: 'A XOR B'}
+        #visualize.draw_net(self.__config, winner, node_names=node_names)
+        #visualize.draw_net(self.__config, winner, node_names=node_names, prune_unused=True)
+        if stats_reporter is not None:
+            visualize.plot_stats(stats_reporter, ylog=False)
+            visualize.plot_species(stats_reporter)
+            matplotlib.pyplot.show()
+
 
     def save_statistics(self, reporter: statistics.StatisticsReporter) -> None:
         stats: typing.List[statistics.TrainingStatisticsEntry] = statistics.generate_statistics(reporter)
@@ -176,7 +191,7 @@ class IRunBoyRunTrainer:
             pickle.dump(graduate, pcklf)
 
 
-    def update_statistics(self, stats: TrainingGenerationStats, characters: typing.Collection[model.characters.NEATTraineeCharacter]) -> None:
+    def update_statistics(self, stats: TrainingGenerationStats, characters: typing.Collection[model.characters.NEATFFTraineeCharacter]) -> None:
         stats.collect_data(characters)
 
         stats_reporter: statistics.StatisticsReporter = None 
@@ -189,14 +204,14 @@ class IRunBoyRunTrainer:
             stats_reporter.post_step(self.__config, self.__population, dict(((char.GenomeId, char.nSteps) for char in characters)))
 
 
-    def _trun_start(self, turn: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, characters: typing.Collection[model.characters.NEATTraineeCharacter]) -> None:
+    def _turn_start(self, turn: int, config: neat.config.Config, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], characters: typing.Collection[model.characters.NEATFFTraineeCharacter]) -> None:
         if self._tracer is not None:
-            self._tracer.start_turn(turn, genomes, config, characters)
+            self._tracer.start_turn(turn, config, self.__population, genomes, characters)
 
 
-    def _trun_end(self, turn: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, characters: typing.Collection[model.characters.NEATTraineeCharacter]) -> None:
+    def _turn_end(self, turn: int, config: neat.config.Config, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], characters: typing.Collection[model.characters.NEATFFTraineeCharacter]) -> None:
         if self._tracer is not None:
-            self._tracer.end_turn(turn, genomes, config, characters)
+            self._tracer.end_turn(turn, config, self.__population, genomes, characters)
 
 
     def __evaluate_genomes(self, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config) -> None:
@@ -205,7 +220,7 @@ class IRunBoyRunTrainer:
         self._generation += 1
 
         if self._tracer is not None:
-            self._tracer.start_generation(self._generation, genomes, config)
+            self._tracer.start_generation(self._generation, config, self.__population, genomes)
 
         conext: typing.Any = self._prepare_generation(self._generation, genomes, config)
 
@@ -214,8 +229,8 @@ class IRunBoyRunTrainer:
         self._finalize_generation(self._generation, genomes, config, conext)
 
         if self._tracer is not None:
-            self._tracer.end_generation(self._generation, genomes, config)
-    
+            self._tracer.end_generation(self._generation, config, self.__population ,genomes)
+
 
     @abc.abstractmethod
     def _prepare_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config) -> typing.Any: ...
@@ -226,16 +241,32 @@ class IRunBoyRunTrainer:
     @abc.abstractmethod
     def _finalize_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: typing.Any) -> None: ...
 
+
+class ARunBoyRunFFTrainer(IRunBoyRunTrainer):
+    def __init__(self, map_type: model.maps.MapName, evaluator: typing.Type[model.interfaces.INEATEvaluator]):
+        IRunBoyRunTrainer.__init__(self, map_type, evaluator)
+
+
+    def _load_config(self, config_path: str) -> neat.config.Config:
+        return neat.config.Config(
+            neat.DefaultGenome,
+            neat.DefaultReproduction,
+            neat.DefaultSpeciesSet,
+            neat.DefaultStagnation,
+            config_path,
+    )
+
  
-class GUIRunBoyRunTrainer(IRunBoyRunTrainer):
+class GUIRunBoyRunTrainerFF(ARunBoyRunFFTrainer):
     class __EvaluationContext(typing.NamedTuple):
         generation_stats: TrainingGenerationStats
         gui_board: GUI.boards.Board
         model_chars: typing.List[model.interfaces.ICharacter]
         gui_chars: typing.List[GUI.interfaces.ICharacter]
-        
+
+
     def __init__(self, map_type: model.maps.MapName, evaluator: typing.Type[model.interfaces.INEATEvaluator], fps: float):
-        IRunBoyRunTrainer.__init__(self, map_type, evaluator)
+        ARunBoyRunFFTrainer.__init__(self, map_type, evaluator)
         pygame.init()
         
         if fps < 0.1:
@@ -254,7 +285,7 @@ class GUIRunBoyRunTrainer(IRunBoyRunTrainer):
         
         pygame.display.set_caption('Train Boy Train!!!')   
         self.__screen: pygame.SurfaceType = pygame.display.set_mode((self.__gui_board.ScreeWidth, self.__gui_board.ScreeHeight), flags=pygame.SCALED)
-        
+
 
     def __del__(self) -> None:
         pygame.quit()
@@ -319,36 +350,36 @@ class GUIRunBoyRunTrainer(IRunBoyRunTrainer):
         gui_chars: typing.List[GUI.interfaces.ICharacter] = []
 
         for idx, (genome_id, genome) in enumerate(genomes):
-            model_chars.append(model.characters.NEATTraineeCharacter(idx, gui_board.Model, 1, 'SE', genome_id, genome, config, self._Evaluator))
+            model_chars.append(model.characters.NEATFFTraineeCharacter(idx, gui_board.Model, 1, 'SE', genome_id, genome, config, self._Evaluator))
         
         for idx, character in enumerate(model_chars):
             gui_chars.append(GUI.characters.CharactersFactory.create_character(idx, gui_board, character, colors[idx]))
 
-        return GUIRunBoyRunTrainer.__EvaluationContext(generation_stats, gui_board, model_chars, gui_chars)
+        return GUIRunBoyRunTrainerFF.__EvaluationContext(generation_stats, gui_board, model_chars, gui_chars)
 
 
     def _evaluate_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None:
-        trainee_chars: typing.List[model.characters.NEATTraineeCharacter] = [model_char for model_char in context.model_chars if isinstance(model_char, model.characters.NEATTraineeCharacter)]
+        trainee_chars: typing.List[model.characters.NEATFFTraineeCharacter] = [model_char for model_char in context.model_chars if isinstance(model_char, model.characters.NEATFFTraineeCharacter)]
         keep_playing: bool = True
         turns: int = -1
 
         context.gui_board.render(self.__screen, *context.gui_chars)
         pygame.display.flip()
-        
+
         while keep_playing:
             self.__clock.tick_busy_loop(self.__fps)
             events: typing.List[pygame.event.Event] = pygame.event.get()
             self.__handle_keys()
-            
+
             if not self.__pause:
                 turns += 1
-                self._trun_start(turns, genomes, config, trainee_chars)
+                self._turn_start(turns, config, genomes, trainee_chars)
                 for gui_char in context.gui_chars:
                     gui_char.do_step()
 
                 self.update_statistics(context.generation_stats, trainee_chars)
                 context.generation_stats.print_stats()
-                self._trun_end(turns, genomes, config, trainee_chars)
+                self._turn_end(turns, config, genomes, trainee_chars)
 
                 for gui_char in context.gui_chars:
                     if not gui_char.Dead:
@@ -380,20 +411,21 @@ class GUIRunBoyRunTrainer(IRunBoyRunTrainer):
             running -= 1
 
 
-class RunBoyRunTrainer(IRunBoyRunTrainer):
+class RunBoyRunTrainerFF(ARunBoyRunFFTrainer):
     class __EvaluationContext(typing.NamedTuple):
         generation_stats: TrainingGenerationStats
         board: model.boards.Board
         model_chars: typing.List[model.interfaces.ICharacter]
 
+
     def __init__(self, map_type: model.maps.MapName, evaluator: typing.Type[model.interfaces.INEATEvaluator], print_maps: bool = False):
-        IRunBoyRunTrainer.__init__(self, map_type, evaluator)
+        ARunBoyRunFFTrainer.__init__(self, map_type, evaluator)
         self.__print_map: bool = print_maps
 
 
     def __do_step(self, character: model.interfaces.ICharacter, verbose: bool = False) -> typing.Tuple[int, int]:
-        if isinstance(character, model.characters.NEATTraineeCharacter):
-            decision: typing.Optional[bool] = typing.cast(model.characters.NEATTraineeCharacter, character).react()
+        if isinstance(character, model.characters.NEATFFTraineeCharacter):
+            decision: typing.Optional[bool] = typing.cast(model.characters.NEATFFTraineeCharacter, character).react()
             move: typing.Tuple[int, int] = character.do_step(decision, verbose)
         if isinstance(character, model.characters.HumanCharacter):
             # TODO Get Keybaord Decision
@@ -409,13 +441,13 @@ class RunBoyRunTrainer(IRunBoyRunTrainer):
         model_chars: typing.List[model.interfaces.ICharacter] = []
 
         for idx, (genome_id, genome) in enumerate(genomes):
-            model_chars.append(model.characters.NEATTraineeCharacter(idx, board, 1, 'SE', genome_id, genome, config, self._Evaluator))
+            model_chars.append(model.characters.NEATFFTraineeCharacter(idx, board, 1, 'SE', genome_id, genome, config, self._Evaluator))
         
-        return GUIRunBoyRunTrainer.__EvaluationContext(generation_stats, board, model_chars)
+        return RunBoyRunTrainerFF.__EvaluationContext(generation_stats, board, model_chars)
 
 
     def _evaluate_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None: 
-        trainee_chars: typing.List[model.characters.NEATTraineeCharacter] = [model_char for model_char in context.model_chars if isinstance(model_char, model.characters.NEATTraineeCharacter)]
+        trainee_chars: typing.List[model.characters.NEATFFTraineeCharacter] = [model_char for model_char in context.model_chars if isinstance(model_char, model.characters.NEATFFTraineeCharacter)]
         keep_playing = True
         turns: int = -1
 
@@ -424,13 +456,481 @@ class RunBoyRunTrainer(IRunBoyRunTrainer):
 
         while keep_playing:
             turns += 1
-            self._trun_start(turns, genomes, config, trainee_chars)
+            self._turn_start(turns, genomes, config, trainee_chars)
             for model_char in context.model_chars:
                 self.__do_step(model_char)
             
             self.update_statistics(context.generation_stats, trainee_chars)
             context.generation_stats.print_stats()
-            self._trun_end(turns, genomes, config, trainee_chars)
+            self._turn_end(turns, genomes, config, trainee_chars)
+            
+            for model_char in context.model_chars:
+                if not model_char.Dead:
+                    break
+            else:
+                keep_playing = False
+
+            if not context.board.proceed():
+                keep_playing = False
+
+            if keep_playing and self.__print_map:
+                context.board.print_map()
+
+
+    def _finalize_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None:
+        if self.__print_map:
+            while running > 0:
+                context.board.print_map()
+                running -= 1
+
+
+class GUIRunBoyRunTrainerRecurrent(ARunBoyRunFFTrainer):
+    class __EvaluationContext(typing.NamedTuple):
+        generation_stats: TrainingGenerationStats
+        gui_board: GUI.boards.Board
+        model_chars: typing.List[model.interfaces.ICharacter]
+        gui_chars: typing.List[GUI.interfaces.ICharacter]
+
+
+    def __init__(self, map_type: model.maps.MapName, evaluator: typing.Type[model.interfaces.INEATEvaluator], fps: float):
+        ARunBoyRunFFTrainer.__init__(self, map_type, evaluator)
+        pygame.init()
+        
+        if fps < 0.1:
+            fps = 0.1
+        if fps > 60.0:
+            fps = 60.0
+        
+        self.__fps: float = fps
+        self.__pause: bool = False
+        self.__key_down_reentrancy: typing.List[bool] = [False, False, False, False, False]
+        self.__clock: pygame.time.Clock = pygame.time.Clock()
+        self.__fps_font: pygame.font.Font = pygame.font.SysFont('Ariel', 28, bold=True)
+        self.__pause_surface: pygame.Surface = pygame.font.SysFont('Ariel', 48, bold=True).render('PAUSE', True, pygame.Color('RED'))
+        
+        self.__gui_board: GUI.boards.Board = GUI.boards.Board((800, 600), self._board)
+        
+        pygame.display.set_caption('Train Boy Train!!!')   
+        self.__screen: pygame.SurfaceType = pygame.display.set_mode((self.__gui_board.ScreeWidth, self.__gui_board.ScreeHeight), flags=pygame.SCALED)
+
+
+    def __del__(self) -> None:
+        pygame.quit()
+
+
+    def __handle_keys(self) -> None:
+        scan_codes: pygame.key.ScancodeWrapper = pygame.key.get_pressed()
+        if scan_codes[pygame.K_UP]:
+            if not self.__key_down_reentrancy[0]:
+                self.__key_down_reentrancy[0] = True
+                self.__fps += 0.1
+                if self.__fps > 60:
+                    self.__fps = 60
+                print(f'set timer: {self.__fps}')
+        else:
+            self.__key_down_reentrancy[0]
+        
+        if scan_codes[pygame.K_DOWN]:
+            if not self.__key_down_reentrancy[1]:
+                self.__key_down_reentrancy[1] = True
+                self.__fps -= 0.1
+                if self.__fps <= 0.2:
+                    self.__fps = 0.2
+                print(f'set timer: {self.__fps}')
+        else:
+            self.__key_down_reentrancy[1] = False
+        
+        if scan_codes[pygame.K_PAGEUP]:
+            if not self.__key_down_reentrancy[2]:
+                self.__key_down_reentrancy[2] = True
+                self.__fps += 5.0
+                if self.__fps > 60:
+                    self.__fps = 60
+                print(f'set timer: {self.__fps}')
+        else:
+            self.__key_down_reentrancy[2] = False
+
+        if scan_codes[pygame.K_PAGEDOWN]:
+            if not self.__key_down_reentrancy[3]:
+                self.__key_down_reentrancy[3] = True
+                self.__fps -= 5.0
+                if self.__fps <= 0.2:
+                    self.__fps = 0.2
+                print(f'set timer: {self.__fps}')
+        else:
+            self.__key_down_reentrancy[3] = False
+
+        
+        if scan_codes[pygame.K_p]:
+            if not self.__key_down_reentrancy[4]:
+                self.__key_down_reentrancy[4] = True
+                self.__pause = not self.__pause
+        else:
+            self.__key_down_reentrancy[4] = False
+
+
+    def _prepare_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config) -> None:
+        generation_stats: TrainingGenerationStats = TrainingGenerationStats(self._generations, len(genomes))
+        colors: typing.List[GUI.interfaces.RGB] = GUI.interfaces.generate_colors_palette(len(genomes))
+        gui_board: GUI.boards.Board = self.__gui_board.clone()
+        model_chars: typing.List[model.interfaces.ICharacter] = []
+        gui_chars: typing.List[GUI.interfaces.ICharacter] = []
+
+        for idx, (genome_id, genome) in enumerate(genomes):
+            model_chars.append(model.characters.NEATRecurrentTraineeCharacter(idx, gui_board.Model, 1, 'SE', genome_id, genome, config, self._Evaluator))
+        
+        for idx, character in enumerate(model_chars):
+            gui_chars.append(GUI.characters.CharactersFactory.create_character(idx, gui_board, character, colors[idx]))
+
+        return GUIRunBoyRunTrainerRecurrent.__EvaluationContext(generation_stats, gui_board, model_chars, gui_chars)
+
+
+    def _evaluate_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None:
+        trainee_chars: typing.List[model.characters.NEATRecurrentTraineeCharacter] = [model_char for model_char in context.model_chars if isinstance(model_char, model.characters.NEATRecurrentTraineeCharacter)]
+        keep_playing: bool = True
+        turns: int = -1
+
+        context.gui_board.render(self.__screen, *context.gui_chars)
+        pygame.display.flip()
+
+        while keep_playing:
+            self.__clock.tick_busy_loop(self.__fps)
+            events: typing.List[pygame.event.Event] = pygame.event.get()
+            self.__handle_keys()
+
+            if not self.__pause:
+                turns += 1
+                self._turn_start(turns, config, genomes, trainee_chars)
+                for gui_char in context.gui_chars:
+                    gui_char.do_step()
+
+                self.update_statistics(context.generation_stats, trainee_chars)
+                context.generation_stats.print_stats()
+                self._turn_end(turns, config, genomes, trainee_chars)
+
+                for gui_char in context.gui_chars:
+                    if not gui_char.Dead:
+                        break
+                else:
+                    keep_playing = False
+
+                if not context.gui_board.proceed():
+                    keep_playing = False
+
+            context.gui_board.render(self.__screen, *context.gui_chars)
+            self.__screen.blit(self.__fps_font.render(f'{self.__clock.get_fps():.02f}', True, pygame.Color('RED')), (self.__screen.get_width() - 64, 4))
+
+            if self.__pause:
+                self.__screen.blit(self.__pause_surface, 
+                    (
+                        (self.__screen.get_width() / 2) - (self.__pause_surface.get_width() / 2),
+                        (self.__screen.get_height() / 2) - (self.__pause_surface.get_height() / 2)
+                    )
+                )
+            pygame.display.flip()
+
+
+    def _finalize_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None:
+        running: int = 4
+        while running > 0:
+            context.gui_board.render(self.__screen, *context.gui_chars)
+            pygame.display.flip()
+            running -= 1
+
+
+class RunBoyRunTrainerRecurrent(ARunBoyRunFFTrainer):
+    class __EvaluationContext(typing.NamedTuple):
+        generation_stats: TrainingGenerationStats
+        board: model.boards.Board
+        model_chars: typing.List[model.interfaces.ICharacter]
+
+
+    def __init__(self, map_type: model.maps.MapName, evaluator: typing.Type[model.interfaces.INEATEvaluator], print_maps: bool = False):
+        ARunBoyRunFFTrainer.__init__(self, map_type, evaluator)
+        self.__print_map: bool = print_maps
+
+
+    def __do_step(self, character: model.interfaces.ICharacter, verbose: bool = False) -> typing.Tuple[int, int]:
+        if isinstance(character, model.characters.NEATRecurrentTraineeCharacter):
+            decision: typing.Optional[bool] = typing.cast(model.characters.NEATRecurrentTraineeCharacter, character).react()
+            move: typing.Tuple[int, int] = character.do_step(decision, verbose)
+        if isinstance(character, model.characters.HumanCharacter):
+            # TODO Get Keybaord Decision
+            move: typing.Tuple[int, int] = character.do_step(False, verbose)
+        else:
+            move: typing.Tuple[int, int] = (0, 0)
+        return move
+
+
+    def _prepare_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config) -> None:
+        generation_stats: TrainingGenerationStats = TrainingGenerationStats(self._generations, len(genomes))
+        board: model.boards.Board = self._board.clone()
+        model_chars: typing.List[model.interfaces.ICharacter] = []
+
+        for idx, (genome_id, genome) in enumerate(genomes):
+            model_chars.append(model.characters.NEATRecurrentTraineeCharacter(idx, board, 1, 'SE', genome_id, genome, config, self._Evaluator))
+        
+        return RunBoyRunTrainerRecurrent.__EvaluationContext(generation_stats, board, model_chars)
+
+
+    def _evaluate_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None: 
+        trainee_chars: typing.List[model.characters.NEATRecurrentTraineeCharacter] = [model_char for model_char in context.model_chars if isinstance(model_char, model.characters.NEATRecurrentTraineeCharacter)]
+        keep_playing = True
+        turns: int = -1
+
+        if self.__print_map:
+            context.board.print_map()
+
+        while keep_playing:
+            turns += 1
+            self._turn_start(turns, genomes, config, trainee_chars)
+            for model_char in context.model_chars:
+                self.__do_step(model_char)
+            
+            self.update_statistics(context.generation_stats, trainee_chars)
+            context.generation_stats.print_stats()
+            self._turn_end(turns, genomes, config, trainee_chars)
+            
+            for model_char in context.model_chars:
+                if not model_char.Dead:
+                    break
+            else:
+                keep_playing = False
+
+            if not context.board.proceed():
+                keep_playing = False
+
+            if keep_playing and self.__print_map:
+                context.board.print_map()
+
+
+    def _finalize_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None:
+        if self.__print_map:
+            while running > 0:
+                context.board.print_map()
+                running -= 1
+
+
+class ARunBoyRunIZNNTrainer(IRunBoyRunTrainer):
+    def __init__(self, map_type: model.maps.MapName, evaluator: typing.Type[model.interfaces.INEATEvaluator]):
+        IRunBoyRunTrainer.__init__(self, map_type, evaluator)
+
+
+    def _load_config(self, config_path: str) -> neat.config.Config:
+        return neat.config.Config(
+            neat.iznn.IZGenome,
+            neat.DefaultReproduction,
+            neat.DefaultSpeciesSet,
+            neat.DefaultStagnation,
+            config_path,
+    )
+
+
+class GUIRunBoyRunTrainerIZNN(ARunBoyRunIZNNTrainer):
+    class __EvaluationContext(typing.NamedTuple):
+        generation_stats: TrainingGenerationStats
+        gui_board: GUI.boards.Board
+        model_chars: typing.List[model.interfaces.ICharacter]
+        gui_chars: typing.List[GUI.interfaces.ICharacter]
+
+
+    def __init__(self, map_type: model.maps.MapName, evaluator: typing.Type[model.interfaces.INEATEvaluator], fps: float):
+        ARunBoyRunIZNNTrainer.__init__(self, map_type, evaluator)
+        pygame.init()
+        
+        if fps < 0.1:
+            fps = 0.1
+        if fps > 60.0:
+            fps = 60.0
+        
+        self.__fps: float = fps
+        self.__pause: bool = False
+        self.__key_down_reentrancy: typing.List[bool] = [False, False, False, False, False]
+        self.__clock: pygame.time.Clock = pygame.time.Clock()
+        self.__fps_font: pygame.font.Font = pygame.font.SysFont('Ariel', 28, bold=True)
+        self.__pause_surface: pygame.Surface = pygame.font.SysFont('Ariel', 48, bold=True).render('PAUSE', True, pygame.Color('RED'))
+        
+        self.__gui_board: GUI.boards.Board = GUI.boards.Board((800, 600), self._board)
+        
+        pygame.display.set_caption('Train Boy Train!!!')   
+        self.__screen: pygame.SurfaceType = pygame.display.set_mode((self.__gui_board.ScreeWidth, self.__gui_board.ScreeHeight), flags=pygame.SCALED)
+
+
+    def __del__(self) -> None:
+        pygame.quit()
+
+
+    def __handle_keys(self) -> None:
+        scan_codes: pygame.key.ScancodeWrapper = pygame.key.get_pressed()
+        if scan_codes[pygame.K_UP]:
+            if not self.__key_down_reentrancy[0]:
+                self.__key_down_reentrancy[0] = True
+                self.__fps += 0.1
+                if self.__fps > 60:
+                    self.__fps = 60
+                print(f'set timer: {self.__fps}')
+        else:
+            self.__key_down_reentrancy[0]
+        
+        if scan_codes[pygame.K_DOWN]:
+            if not self.__key_down_reentrancy[1]:
+                self.__key_down_reentrancy[1] = True
+                self.__fps -= 0.1
+                if self.__fps <= 0.2:
+                    self.__fps = 0.2
+                print(f'set timer: {self.__fps}')
+        else:
+            self.__key_down_reentrancy[1] = False
+        
+        if scan_codes[pygame.K_PAGEUP]:
+            if not self.__key_down_reentrancy[2]:
+                self.__key_down_reentrancy[2] = True
+                self.__fps += 5.0
+                if self.__fps > 60:
+                    self.__fps = 60
+                print(f'set timer: {self.__fps}')
+        else:
+            self.__key_down_reentrancy[2] = False
+
+        if scan_codes[pygame.K_PAGEDOWN]:
+            if not self.__key_down_reentrancy[3]:
+                self.__key_down_reentrancy[3] = True
+                self.__fps -= 5.0
+                if self.__fps <= 0.2:
+                    self.__fps = 0.2
+                print(f'set timer: {self.__fps}')
+        else:
+            self.__key_down_reentrancy[3] = False
+
+        
+        if scan_codes[pygame.K_p]:
+            if not self.__key_down_reentrancy[4]:
+                self.__key_down_reentrancy[4] = True
+                self.__pause = not self.__pause
+        else:
+            self.__key_down_reentrancy[4] = False
+
+
+    def _prepare_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config) -> None:
+        generation_stats: TrainingGenerationStats = TrainingGenerationStats(self._generations, len(genomes))
+        colors: typing.List[GUI.interfaces.RGB] = GUI.interfaces.generate_colors_palette(len(genomes))
+        gui_board: GUI.boards.Board = self.__gui_board.clone()
+        model_chars: typing.List[model.interfaces.ICharacter] = []
+        gui_chars: typing.List[GUI.interfaces.ICharacter] = []
+
+        for idx, (genome_id, genome) in enumerate(genomes):
+            model_chars.append(model.characters.NEATIZNNTraineeCharacter(idx, gui_board.Model, 1, 'SE', genome_id, genome, config, self._Evaluator))
+        
+        for idx, character in enumerate(model_chars):
+            gui_chars.append(GUI.characters.CharactersFactory.create_character(idx, gui_board, character, colors[idx]))
+
+        return GUIRunBoyRunTrainerIZNN.__EvaluationContext(generation_stats, gui_board, model_chars, gui_chars)
+
+
+    def _evaluate_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None:
+        trainee_chars: typing.List[model.characters.NEATIZNNTraineeCharacter] = [model_char for model_char in context.model_chars if isinstance(model_char, model.characters.NEATIZNNTraineeCharacter)]
+        keep_playing: bool = True
+        turns: int = -1
+
+        context.gui_board.render(self.__screen, *context.gui_chars)
+        pygame.display.flip()
+
+        while keep_playing:
+            self.__clock.tick_busy_loop(self.__fps)
+            events: typing.List[pygame.event.Event] = pygame.event.get()
+            self.__handle_keys()
+
+            if not self.__pause:
+                turns += 1
+                self._turn_start(turns, config, genomes, trainee_chars)
+                for gui_char in context.gui_chars:
+                    gui_char.do_step()
+
+                self.update_statistics(context.generation_stats, trainee_chars)
+                context.generation_stats.print_stats()
+                self._turn_end(turns, config, genomes, trainee_chars)
+
+                for gui_char in context.gui_chars:
+                    if not gui_char.Dead:
+                        break
+                else:
+                    keep_playing = False
+
+                if not context.gui_board.proceed():
+                    keep_playing = False
+
+            context.gui_board.render(self.__screen, *context.gui_chars)
+            self.__screen.blit(self.__fps_font.render(f'{self.__clock.get_fps():.02f}', True, pygame.Color('RED')), (self.__screen.get_width() - 64, 4))
+
+            if self.__pause:
+                self.__screen.blit(self.__pause_surface, 
+                    (
+                        (self.__screen.get_width() / 2) - (self.__pause_surface.get_width() / 2),
+                        (self.__screen.get_height() / 2) - (self.__pause_surface.get_height() / 2)
+                    )
+                )
+            pygame.display.flip()
+
+
+    def _finalize_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None:
+        running: int = 4
+        while running > 0:
+            context.gui_board.render(self.__screen, *context.gui_chars)
+            pygame.display.flip()
+            running -= 1
+
+
+class RunBoyRunTrainerIZNN(ARunBoyRunIZNNTrainer):
+    class __EvaluationContext(typing.NamedTuple):
+        generation_stats: TrainingGenerationStats
+        board: model.boards.Board
+        model_chars: typing.List[model.interfaces.ICharacter]
+
+    def __init__(self, map_type: model.maps.MapName, evaluator: typing.Type[model.interfaces.INEATEvaluator], print_maps: bool = False):
+        ARunBoyRunIZNNTrainer.__init__(self, map_type, evaluator)
+        self.__print_map: bool = print_maps
+
+
+    def __do_step(self, character: model.interfaces.ICharacter, verbose: bool = False) -> typing.Tuple[int, int]:
+        if isinstance(character, model.characters.NEATIZNNTraineeCharacter):
+            decision: typing.Optional[bool] = typing.cast(model.characters.NEATIZNNTraineeCharacter, character).react()
+            move: typing.Tuple[int, int] = character.do_step(decision, verbose)
+        if isinstance(character, model.characters.HumanCharacter):
+            # TODO Get Keybaord Decision
+            move: typing.Tuple[int, int] = character.do_step(False, verbose)
+        else:
+            move: typing.Tuple[int, int] = (0, 0)
+        return move
+
+
+    def _prepare_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config) -> None:
+        generation_stats: TrainingGenerationStats = TrainingGenerationStats(self._generations, len(genomes))
+        board: model.boards.Board = self._board.clone()
+        model_chars: typing.List[model.interfaces.ICharacter] = []
+
+        for idx, (genome_id, genome) in enumerate(genomes):
+            model_chars.append(model.characters.NEATIZNNTraineeCharacter(idx, board, 1, 'SE', genome_id, typing.cast(neat.iznn.IZGenome, genome), config, self._Evaluator))
+        
+        return RunBoyRunTrainerIZNN.__EvaluationContext(generation_stats, board, model_chars)
+
+
+    def _evaluate_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, context: __EvaluationContext) -> None: 
+        trainee_chars: typing.List[model.characters.NEATIZNNTraineeCharacter] = [model_char for model_char in context.model_chars if isinstance(model_char, model.characters.NEATIZNNTraineeCharacter)]
+        keep_playing = True
+        turns: int = -1
+
+        if self.__print_map:
+            context.board.print_map()
+
+        while keep_playing:
+            turns += 1
+            self._tr=self._turn_start(turns, genomes, config, trainee_chars)
+            for model_char in context.model_chars:
+                self.__do_step(model_char)
+            
+            self.update_statistics(context.generation_stats, trainee_chars)
+            context.generation_stats.print_stats()
+            self._turn_end(turns, genomes, config, trainee_chars)
             
             for model_char in context.model_chars:
                 if not model_char.Dead:

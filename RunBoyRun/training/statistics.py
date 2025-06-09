@@ -43,6 +43,7 @@ class StatisticsReporter(neat.statistics.BaseReporter):
         self.genomes_steps: typing.Dict[int, typing.Dict[int, int]] = {}
         self.generations: int = 0
 
+
     def start_generation(self, generation: int):
         self.generations = generation
         self.genomes_steps[generation] = {}
@@ -57,7 +58,7 @@ class StatisticsReporter(neat.statistics.BaseReporter):
 
         # Store the fitnesses of the members of each currently active species.
         species_stats: typing.Dict[int, float] = {}
-        
+
         sid: int
         specie: neat.species.Species
         for sid, specie in neat.six_util.iteritems(species_set.species):
@@ -81,7 +82,7 @@ class StatisticsReporter(neat.statistics.BaseReporter):
         return steps
 
 
-    def get_fitness_stat(self, f):
+    def get_fitness_stat(self, f: typing.Callable[[typing.Iterable[float]], float]) -> typing.List[float]:
         stat = []
         for stats in self.generation_statistics:
             scores = []
@@ -92,31 +93,19 @@ class StatisticsReporter(neat.statistics.BaseReporter):
         return stat
 
 
-    def get_fitness_mean(self):
+    def get_fitness_mean(self) -> typing.List[float]:
         """Get the per-generation mean fitness."""
         return self.get_fitness_stat(neat.math_util.mean)
 
 
-    def get_fitness_stdev(self):
+    def get_fitness_stdev(self) -> typing.List[float]:
         """Get the per-generation standard deviation of the fitness."""
         return self.get_fitness_stat(neat.math_util.stdev)
 
 
-    def get_fitness_median(self):
+    def get_fitness_median(self) -> typing.List[float]:
         """Get the per-generation median fitness."""
         return self.get_fitness_stat(neat.math_util.median2)
-
-
-    def get_average_cross_validation_fitness(self): # pragma: no cover
-        """Get the per-generation average cross_validation fitness."""
-        avg_cross_validation_fitness = []
-        for stats in self.generation_cross_validation_statistics:
-            scores = []
-            for fitness in stats.values():
-                scores.extend(fitness)
-            avg_cross_validation_fitness.append(neat.math_util.mean(scores))
-
-        return avg_cross_validation_fitness
 
 
     def best_unique_genomes(self, n: int) -> typing.List[neat.genome.DefaultGenome]:
@@ -174,163 +163,215 @@ class StatisticsReporter(neat.statistics.BaseReporter):
         return species_fitness
 
 
-
 class TrainingTurnStatisticsEntry(typing.TypedDict):
     nSteps: int
     nLastPltafromStep: int
     Fitness: float
     EvaluatedFitness: float
     Decision: float
-    DecisionActive: bool  
+    DecisionActive: bool
     DecisionKind: int
 
 
-# key is the genome id
-TrainingGenomeStatisticsEntry=typing.Dict[int, TrainingTurnStatisticsEntry]
-# each turn new entry
-TrainingTurnGenomeStatisticsEntry = typing.List[TrainingGenomeStatisticsEntry]
-# index is the generation number
-TrainingGenerationTurnGenomeStatisticsEntry = typing.List[TrainingTurnGenomeStatisticsEntry]
+class TrainingGenerationStatisticsEntry(typing.NamedTuple):
+    turns: typing.List[typing.Dict[int, TrainingTurnStatisticsEntry]]
+    fittest: typing.List[neat.genome.DefaultGenome]
 
 
 class TrainingTrunStatsTracer:
-    class JSONEncoder(json.JSONEncoder):
-        def __init__(self, *args, skipkeys: bool=False, ensure_ascii: bool=True, check_circular: bool=True, allow_nan: bool=True, sort_keys: bool=False, indent: typing.Optional[int]=None, separators: typing.Optional[str]=None, default: typing.Callable=None) -> None:
-            json.JSONEncoder.__init__(self, *args, skipkeys=skipkeys, ensure_ascii=ensure_ascii, check_circular=check_circular, allow_nan=allow_nan, sort_keys=sort_keys, indent=indent, separators=separators, default=default)
+    class JSONEncoder:
+        def __init__(self, indent: typing.Optional[typing.Union[int, str]]=None) -> None:
+            self.__indent: str = ''
+            if indent:
+                if isinstance(indent, str):
+                    self.__indent += indent
+                elif isinstance(indent, int):
+                    self.__indent += ' ' * indent
 
-        def format_float(self, value: float) -> str:
-            return format(value, '.6f')
+
+        def encode(self, value: typing.Any, initial_indent: typing.Optional[typing.Union[int, str]]=None) -> str:
+            if initial_indent:
+                if isinstance(initial_indent, int):
+                    initial_indent += ' ' * initial_indent
+            else:
+                initial_indent = ''
+
+            stream: io.StringIO = io.StringIO()
+            if isinstance(value, typing.Mapping):
+                stream.write(initial_indent)
+                stream.write('{')
+                if initial_indent:
+                    stream.write('\n')
+                self.__encode_mapping(stream, initial_indent + self.__indent, typing.cast(typing.Mapping[typing.Any, typing.Any], value))
+                if initial_indent:
+                    stream.write('\n')
+                stream.write(initial_indent)
+                stream.write('}')
+            elif isinstance(value, typing.Sequence):
+                stream.write(initial_indent)
+                stream.write('[')
+                if initial_indent:
+                    stream.write('\n')
+                self.__encode_list(stream, initial_indent + self.__indent, typing.cast(typing.Sequence[typing.Any], value))
+                if initial_indent:
+                    stream.write('\n')
+                stream.write(initial_indent)
+                stream.write(']')
+            else:
+                raise ValueError(f'unsupported json type {type(value)}')
+
+            return stream.getvalue()
 
 
-        def floatstr(self, o: float, _inf=json.encoder.INFINITY, _neginf=-json.encoder.INFINITY):
-                # Check for specials.  Note that this type of test is processor
-                # and/or platform-specific, so do tests which don't depend on the
-                # internals.
+        def __encode_scalar(self, stream: io.StringIO, value: typing.Optional[typing.Union[str, float, int, bool]]) -> None:
+            if value is None:
+                stream.write('null')
+            elif value is True:
+                stream.write('true')
+            elif value is False:
+                stream.write('false')
+            elif isinstance(value, str):
+                stream.write('"')
+                stream.write(typing.cast(str, value))
+                stream.write('"')
+            elif isinstance(value, int):
+                stream.write(str(typing.cast(int, value)))
+            elif isinstance(value, float):
+                stream.write(format(typing.cast(float, value), '.6f'))
+            else:
+                raise ValueError(f'unsupported json type {type(value)}')
 
-                if o != o:
-                    text = 'NaN'
-                elif o == _inf:
-                    text = 'Infinity'
-                elif o == _neginf:
-                    text = '-Infinity'
+
+        def __encode_list(self, stream: io.StringIO, indent: str, value: typing.Sequence[typing.Any]) -> None:
+            for entry in value:
+                if isinstance(entry, typing.Mapping):
+                    stream.write(indent)
+                    stream.write('{')
+                    if indent:
+                        stream.write('\n')
+                    self.__encode_mapping(stream, indent + self.__indent, typing.cast(typing.Mapping[typing.Any, typing.Any], entry))
+                    if indent:
+                        stream.write('\n')
+                    stream.write(indent)
+                    stream.write('}')
+                elif isinstance(entry, typing.Sequence):
+                    stream.write(indent)
+                    stream.write('[')
+                    if indent:
+                        stream.write('\n')
+                    self.__encode_list(stream, indent + self.__indent, typing.cast(typing.Sequence[typing.Any], entry))
+                    if indent:
+                        stream.write('\n')
+                    stream.write(indent)
+                    stream.write(']')
                 else:
-                    return self.format_float(o)
+                    stream.write(indent)
+                    self.__encode_scalar(stream, entry)
 
-                if not self.allow_nan:
-                    raise ValueError("Out of range float values are not JSON compliant: " + repr(o))
+                stream.write(',')
+                if indent:
+                    stream.write('\n')
 
-                return text
-
-        def iterencode(self, o, _one_shot=False):
-            if self.check_circular:
-                markers = {}
-            else:
-                markers = None
-            if self.ensure_ascii:
-                _encoder = json.encoder.encode_basestring_ascii
-            else:
-                _encoder = json.encoder.encode_basestring
+            if len(value) > 0:
+                if indent:
+                    stream.seek(stream.tell() - 2, io.SEEK_SET)
+                else:
+                    stream.seek(stream.tell() - 1, io.SEEK_SET)
 
 
-            if (_one_shot and c_make_encoder is not None and self.indent is None):
-                _iterencode = c_make_encoder(
-                    markers, self.default, _encoder, self.indent,
-                    self.key_separator, self.item_separator, self.sort_keys,
-                    self.skipkeys, self.allow_nan)
-            else:
-                _iterencode = json.encoder._make_iterencode(
-                    markers, self.default, _encoder, self.indent, self.floatstr,
-                    self.key_separator, self.item_separator, self.sort_keys,
-                    self.skipkeys, _one_shot)
-            return _iterencode(o, 0)
+        def __encode_key(self, key: typing.Optional[typing.Union[str, float, int, bool]]) -> str:
+            if key is None:
+                return '"null"'
+
+            if key is True:
+                return "true"
+
+            if key is False:
+                return '"false"'
+
+            if isinstance(key, str):
+                return '"' + key + '"'
+
+            if isinstance(key, int):
+                return f'"{key}"'
+
+            if isinstance(key, float):
+                return f'"{key:.6f}"'
+
+            raise ValueError(f'unsupported json key type {type(value)}')
 
 
-    class JSONDecoder(json.JSONDecoder):
-         def __init__(self, *args, object_hook=None, parse_float=None, parse_int=None, parse_constant=None, strict=True, object_pairs_hook=None) -> None:
-             json.JSONDecoder.__init__(self, *args, object_hook=object_hook, parse_float=parse_float, parse_int=parse_int, strict=strict, object_pairs_hook=object_pairs_hook)
-    
+        def __encode_mapping(self, stream: io.StringIO, indent: str, value: typing.Dict[typing.Any, typing.Any]) -> None:
+            for key in value:
+                stream.write(indent)
+                stream.write(self.__encode_key(key))
+                stream.write(': ')
+
+                val: typing.Any = value[key]
+                if isinstance(val, typing.Mapping):
+                    stream.write('{')
+                    if indent:
+                        stream.write('\n')
+                    self.__encode_mapping(stream, indent + self.__indent, typing.cast(typing.Mapping[typing.Any, typing.Any], val))
+                    if indent:
+                        stream.write('\n')
+                    stream.write(indent)
+                    stream.write('}')
+                elif isinstance(val, typing.Sequence):
+                    stream.write('[')
+                    if indent:
+                        stream.write('\n')
+                    self.__encode_list(stream, indent + self.__indent, typing.cast(typing.Sequence[typing.Any], val))
+                    if indent:
+                        stream.write('\n')
+                    stream.write(indent)
+                    stream.write(']')
+                else:
+                    self.__encode_scalar(stream, val)
+
+                stream.write(',')
+                if indent:
+                    stream.write('\n')
+
+            if len(value) > 0:
+                if indent:
+                    stream.seek(stream.tell() - 2, io.SEEK_SET)
+                else:
+                    stream.seek(stream.tell() - 1, io.SEEK_SET)
+
+
     def __init__(self, output_file: str):
-        self.__generation_statistics: TrainingGenerationTurnGenomeStatisticsEntry = []
+        self.__generation_statistics: typing.List[TrainingGenerationStatisticsEntry] = []
+
         self.__deaths: typing.Dict[int, bool] = {}
         self.__output_file: io.BufferedWriter = open(output_file, 'wb')
-        self.__json_writer = TrainingTrunStatsTracer.JSONEncoder(indent=1)
+        self.__json_writer = TrainingTrunStatsTracer.JSONEncoder(indent='\t')
 
-        self.__output_file.writelines(
-            (
-                b'{\n', # statrt of TrainingGenerationTurnGenomeStatisticsEntry
-                b'\t"trace": [\n'
-                b'\t]\n'
-                b'}' # end of TrainingGenerationTurnGenomeStatisticsEntry
-            )
-        )
-
-        self.__output_file.flush()
 
     def __del__(self) -> None:
         self.__output_file.close()
 
 
-    def start_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config):
-        self.__generation_statistics.append([])
-        if generation > 0:
-            self.__output_file.seek(-5, io.SEEK_END) # back ending of json and TrainingTurnGenomeStatisticsEntry and TrainingGenerationTurnGenomeStatisticsEntry
-            self.__output_file.write(b',\n') # end of previous TrainingTurnGenomeStatisticsEntry
-        else:            
-            self.__output_file.seek(-4, io.SEEK_END) # back ending of json and TrainingGenerationTurnGenomeStatisticsEntry
-        
-        self.__output_file.writelines(
-            (
-                b'\t\t[\n', # start of TrainingTurnGenomeStatisticsEntry
-                b'\t\t]\n', # end of TrainingTurnGenomeStatisticsEntry
-                b'\t]\n' # end of TrainingGenerationTurnGenomeStatisticsEntry
-                b'}' # end of json
-            )
-        )
+    def start_training(self, nGenerations: int, config: neat.config.Config, population: neat.population.Population) -> None:
+        self.__output_file.write(b'{\n\t"trace": [\n\t]\n}')
         self.__output_file.flush()
 
 
-    def end_generation(self, generation: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config):
-        self.__deaths.clear()
-        self.__output_file.seek(-8, io.SEEK_END) # back ending of json TrainingTurnGenomeStatisticsEntry and TrainingGenerationTurnGenomeStatisticsEntry
-        self.__output_file.writelines(
-            (
-                b'\t\t]\n', # end of TrainingTurnGenomeStatisticsEntry
-                b'\t]\n' # end of TrainingGenerationTurnGenomeStatisticsEntry
-                b'}' # end of json
-            )
-        )
-        self.__output_file.flush()
+    def start_generation(self, generation: int, config: neat.config.Config, population: neat.population.Population, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]]):
+        self.__generation_statistics.append(TrainingGenerationStatisticsEntry(turns=[],fittest=[]))
 
 
-    def start_turn(self, trun: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, characters: typing.Collection[model.characters.NEATTraineeCharacter]):
-        self.__generation_statistics[-1].append({})
-        if trun > 0:
-            self.__output_file.seek(-9, io.SEEK_END) # back ending of json and TrainingGenomeStatisticsEntry and TrainingTurnGenomeStatisticsEntry and TrainingGenerationTurnGenomeStatisticsEntry
-            self.__output_file.write( b',\n') # end of previous TrainingGenomeStatisticsEntry
-        else:
-            self.__output_file.seek(-8, io.SEEK_END) # back ending of json and TrainingTurnGenomeStatisticsEntry and TrainingGenerationTurnGenomeStatisticsEntry
-        
-        self.__output_file.writelines(
-            (
-                b'\t\t\t{\n', # start TrainingGenomeStatisticsEntry
-                b'\t\t\t}\n', # end TrainingGenomeStatisticsEntry
-                b'\t\t]\n',  # end of TrainingTurnGenomeStatisticsEntry
-                b'\t]\n' # end of TrainingGenerationTurnGenomeStatisticsEntry
-                b'}' # end of TrainingGenerationTurnGenomeStatisticsEntry
-            )
-        )
-
-        self.__output_file.flush()
+    def start_turn(self, trun: int, config: neat.config.Config, population: neat.population.Population, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], characters: typing.Collection[model.characters.INEATTraineeCharacter]) -> None:
+        self.__generation_statistics[-1].turns.append({})
 
 
-    def end_turn(self, trun: int, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], config: neat.config.Config, characters: typing.Collection[model.characters.NEATTraineeCharacter]) -> None:
-        turn_stats: TrainingTurnGenomeStatisticsEntry = self.__generation_statistics[-1]
-        genomes_stats: TrainingGenomeStatisticsEntry = turn_stats[-1]
+    def end_turn(self, trun: int, config: neat.config.Config, population: neat.population.Population, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]], characters: typing.Collection[model.characters.INEATTraineeCharacter]) -> None:
+        genomes_stats: typing.Dict[int, TrainingTurnStatisticsEntry] = self.__generation_statistics[-1].turns[-1]
         for character in characters:
             if character.Dead:
-                if self.__deaths.get(character.Id, False):
+                if self.__deaths.get(character.GenomeId, False):
                     continue
-                self.__deaths[character.Id] = True
+                self.__deaths[character.GenomeId] = True
 
             genomes_stats[character.GenomeId] = TrainingTurnStatisticsEntry(
                 nSteps=character.nSteps,
@@ -342,27 +383,53 @@ class TrainingTrunStatsTracer:
                 DecisionKind=character.Evaluator.DecisionKind
             )
 
-            if len(genomes_stats) > 1:
-                self.__output_file.seek(-14, io.SEEK_END)  # back ending of TrainingGenerationTurnGenomeStatisticsEntry and ending TrainingTurnGenomeStatisticsEntry and ending TrainingGenomeStatisticsEntry
-                self.__output_file.write(b',\n')
-                self.__output_file.flush()
-            else:
-                self.__output_file.seek(-13, io.SEEK_END)  # back ending of TrainingGenerationTurnGenomeStatisticsEntry and ending TrainingTurnGenomeStatisticsEntry and ending TrainingGenomeStatisticsEntry
 
-            json_str: str = self.__json_writer.encode(genomes_stats[character.GenomeId])
-            json_str: typing.List[bytes] = [('\t\t\t\t' + line.replace(' ', '\t', 2) + '\n').encode() for line in json_str.splitlines()]
-            json_str[0] = f'\t\t\t\t"{character.GenomeId}": '.encode() + json_str[0].lstrip()
-            json_str.extend(
-                (
-                    b'\t\t\t}\n', # end TrainingGenomeStatisticsEntry
-                    b'\t\t]\n',  # end of TrainingTurnGenomeStatisticsEntry
-                    b'\t]\n' # end of TrainingGenerationTurnGenomeStatisticsEntry
-                    b'}' # end of json
-                )
-            )
-            self.__output_file.writelines(json_str)
-            self.__output_file.flush()
-    
+    def end_generation(self, generation: int, config: neat.config.Config, population: neat.population.Population, genomes: typing.List[typing.Tuple[int, neat.genome.DefaultGenomeConfig]]):
+        best_fitness: float = 0.0
+        best_generation_genomes: typing.List[neat.genome.DefaultGenome] = []
+        for genome in typing.cast(typing.Iterable[neat.genome.DefaultGenome], neat.six_util.itervalues(population.population)):
+            if genome.fitness >= best_fitness:
+                best_fitness = genome.fitness
+
+        if best_fitness > 0.0:
+            for genome in typing.cast(typing.Iterable[neat.genome.DefaultGenome], neat.six_util.itervalues(population.population)):
+                if genome.fitness == best_fitness:
+                    best_generation_genomes.append(copy.deepcopy(genome))
+
+        self.__generation_statistics[-1].fittest.append(best_generation_genomes)
+
+        if len(self.__generation_statistics) > 1:
+            self.__output_file.seek(-5, io.SEEK_END)  # back ending of TrainingGenerationTurnGenomeStatisticsEntry and ending TrainingTurnGenomeStatisticsEntry and ending TrainingGenomeStatisticsEntry
+            self.__output_file.write(b',\n')
+        else:
+            self.__output_file.seek(-4, io.SEEK_END)  # back ending of TrainingGenerationTurnGenomeStatisticsEntry and ending TrainingTurnGenomeStatisticsEntry and ending TrainingGenomeStatisticsEntry
+
+        self.__output_file.write(
+            self.__json_writer.encode(
+                {
+                    'fittest': dict((genome.key, genome.fitness) for genome in best_generation_genomes),
+                    'turns': self.__generation_statistics[-1].turns
+                },
+                initial_indent='\t\t'
+            ).encode()
+        )
+
+        self.__output_file.write(b'\n\t]\n}')
+        self.__output_file.flush()
+
+        # sid: int
+        # specie: neat.species.Species
+        # for sid, specie in neat.six_util.iteritems(typing.cast(neat.species.DefaultSpeciesSet ,population.species).species):
+        #     for id, genome in neat.six_util.iteritems(typing.cast(typing.Dict[int, neat.genome.DefaultGenome], specie.members)):
+        #         print(f'genome id: {id} =? {genome.key}')
+        #         for g in best_generation_genomes:
+        #             if genome.key == g.key:
+        #                 print(f'genome({genome.key}) => {genome.fitness} =? {g.fitness}')
+
+
+    def end_training(self, nGenerations: int, config: neat.config.Config, population: neat.population.Population) -> None:
+        pass
+
 
 def generate_statistics(reporter: StatisticsReporter) -> typing.List[TrainingStatisticsEntry]:
     return [

@@ -119,19 +119,22 @@ class Board(interfaces.IBoard):
             row += 1
 
 
-    def render(self, screen: pygame.Surface, *characters: typing.Iterable[interfaces.ICharacter]) -> None:
+    def render(self, screen: pygame.Surface, *characters: interfaces.ICharacter) -> None:
         screen.fill((0,0,0))
         self.__render_elements(screen)
         for character in characters:
-            character.render(screen)
+            if character.Dead:
+                character.render(screen)
+        for character in characters:
+            if not character.Dead:
+                character.render(screen)
         self.__render_mesh(screen)
 
 
     def proceed(self) -> bool:
         return self._board.proceed()
-    
+
 
     def clone(self) -> interfaces.IBoard:
         return Board((self.ScreeWidth, self.ScreeHeight), self._board.clone())
 
-        

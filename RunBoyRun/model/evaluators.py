@@ -3,7 +3,7 @@ from RunBoyRun.model import interfaces
 from RunBoyRun.model import characters
 
 class NEATStepCounerEvaluator(interfaces.INEATEvaluator):
-    def __init__(self, character: characters.NEATTraineeCharacter, board: interfaces.IBoard):
+    def __init__(self, character: characters.INEATTraineeCharacter, board: interfaces.IBoard):
         interfaces.INEATEvaluator.__init__(self, character, board)
               
 
@@ -46,7 +46,7 @@ class NEATStepCounerEvaluator(interfaces.INEATEvaluator):
     
 
 class NEATLastPlatformPenaltyEvaluator(interfaces.INEATEvaluator):
-    def __init__(self, character: characters.NEATTraineeCharacter, board: interfaces.IBoard):
+    def __init__(self, character: characters.INEATTraineeCharacter, board: interfaces.IBoard):
         interfaces.INEATEvaluator.__init__(self, character, board)
               
 

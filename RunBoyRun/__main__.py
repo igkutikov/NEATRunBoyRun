@@ -27,11 +27,31 @@ def play() -> None:
     print("Press Any to exit...")
     keyboard.wait() # Waits for any key press
 
+
 def train() -> None:
-    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainer('random', model.evaluators.NEATStepCounerEvaluator)
-    trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainer('random', model.evaluators.NEATStepCounerEvaluator, 20)
-    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainer('static_with_obstacles', model.evaluators.NEATLastPlatformPenaltyEvaluator, 20)
-    trainer.train(600)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainerFF('random', model.evaluators.NEATStepCounerEvaluator)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainerFF('static_with_obstacles', model.evaluators.NEATStepCounerEvaluator)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainerFF('static', model.evaluators.NEATStepCounerEvaluator)
+    trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainerFF('random', model.evaluators.NEATLastPlatformPenaltyEvaluator, 60)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainerFF('static_with_obstacles', model.evaluators.NEATLastPlatformPenaltyEvaluator, 40)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainerFF('static', model.evaluators.NEATLastPlatformPenaltyEvaluator, 40)
+    
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainerRecurrent('random', model.evaluators.NEATStepCounerEvaluator)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainerRecurrent('static_with_obstacles', model.evaluators.NEATStepCounerEvaluator)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainerRecurrent('static', model.evaluators.NEATStepCounerEvaluator)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainerRecurrent('random', model.evaluators.NEATStepCounerEvaluator, 40)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainerRecurrent('static_with_obstacles', model.evaluators.NEATLastPlatformPenaltyEvaluator, 40)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainerRecurrent('static', model.evaluators.NEATLastPlatformPenaltyEvaluator, 40)
+
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainerIZNN('random', model.evaluators.NEATStepCounerEvaluator)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainerIZNN('static_with_obstacles', model.evaluators.NEATStepCounerEvaluator)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.RunBoyRunTrainerIZNN('static', model.evaluators.NEATStepCounerEvaluator)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainerIZNN('random', model.evaluators.NEATStepCounerEvaluator, 40)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainerIZNN('static_with_obstacles', model.evaluators.NEATStepCounerEvaluator, 40)
+    #trainer: training.trainers.IRunBoyRunTrainer = training.trainers.GUIRunBoyRunTrainerIZNN('static', model.evaluators.NEATStepCounerEvaluator, 40)
+
+
+    trainer.train(9000)
     del trainer
 
     stats: typing.List[training.statistics.TrainingStatisticsEntry] = training.statistics.load_statistics_json(training.JSON_STATISTICS_FPATH)
